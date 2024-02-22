@@ -20,8 +20,18 @@ db.connect();
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
+let currentUserId = 1; //start from first tap before tapping
+
+let users = [
+  { id: 1, name: "Angela", color: "teal"}, //must match the currentUserId to associate with current user
+  { id: 1, name: "Jack", color: "powderblue"},
+] //can be [] but for visualizing it structure
+
 async function checkVisited() {
-  const result = await db.query("SELECT country_code FROM visited_countries");
+  const result = await db.query(
+    "SELECT country_code FROM visited_countries JOIN users ON users.id = user_id WHERE user_id = $1;",
+    [currentUserId]
+  );
 
   let countries = [];
   result.rows.forEach((country) => {
@@ -30,56 +40,77 @@ async function checkVisited() {
   return countries;
 }
 
+async function getCurrentUser() {
+  const result = await db.query("SELECT * FROM users");
+  users = result.rows; //put all info in the users [{}]array dictionary
+  return users.find((user) => user.id == currentUserId); //use find instead of for loop //for 3 equal sign value and data type also must match
+}
+
 //2. Get home page
 app.get("/", async (req, res) => {
   const countries = await checkVisited();
-  res.render("index.ejs", { countries: countries, total: countries.length });
+  const currentUser = await getCurrentUser();
+
+  res.render("index.ejs", { 
+    countries: countries, 
+    total: countries.length,
+    users: users,
+    color: currentUser.color,
+  });
 });
 
 //1. INSERT new country in pg
 app.post("/add", async (req, res) => {
-  const input = req.body["country"];
-  // user types in input field
+  const input = req.body['country'];
+  const currentUser = await getCurrentUser();
 
-//Catch error -> try
   try {
     const result = await db.query(
       "SELECT country_code FROM countries WHERE LOWER(country_name) LIKE '%' || $1 || '%';",
       [input.toLowerCase()]
-      //make query from pg with the input to find correcponding country code and store in "result"
-      //$1 = user's input
     );
-
+    
     const data = result.rows[0];
     const countryCode = data.country_code;
-    
+
     try {
-      await db.query("INSERT INTO visited_countries (country_code) VALUES ($1)",
-      [countryCode]); //value $1 will be replaced by the countryCode
+      await db.query(
+        "INSERT INTO visited_countries (country_code, user_id) VALUES ($1, $2)",
+        [countryCode, currentUserId]
+      );
       res.redirect("/");
-      //go bock to the home page
     } catch (err) {
       console.log(err);
-      const countries = await checkVisited();
-      //checkvisited() grab all countries alraedy visited
-      res.render("index.ejs", {
-        countries: countries,
-        total: countries.length,
-        error: "Country has already been added, try again!",
-      });
     }
   } catch (err) {
-    console.log(err);
-    const countries = await checkVisited();
-    res.render("index.ejs", {
-      countries: countries,
-      total: countries.length,
-      error: "Country name does not exist, try again!"
-    })
+      console.log(err);
   }
+});
+
+app.post("/user", async (req, res) => {
+  if (req.body.add === "new") {
+    res.render("new.ejs");
+  } else {
+    currentUserId = req.body.user;
+    res.redirect("/");
+  }
+}); //input name add in index.ejs
+
+app.post("/new", async (req, res) => {
+  const name = req.body.name; //user put name to add in inpur field
+  const color = req.body.color;
+
+  const result = await db.query(
+    "INSERT INTO users (name, color) VALUES($1, $2) RETURNING *;",
+    [name, color]
+  ); //add name and color in pg
+
+  const id = result.rows[0].id;
+  currentUserId = id;
+
+  res.redirect("/"); //to get latest info about the currentUser
 });
 
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
-``
